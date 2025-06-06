@@ -1,0 +1,35 @@
+version: '3.8'
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+    env_file:
+      - ./backend/.env
+    # depends_on: # Not needed for SQLite
+      # - db
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile # Assuming you will create this Dockerfile for frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+  # db: # Commented out for SQLite as per instructions
+  #   image: postgres:15
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   environment:
+  #     POSTGRES_USER: your_db_user
+  #     POSTGRES_PASSWORD: your_db_password
+  #     POSTGRES_DB: psych_lims_db
+# volumes: # Commented out for SQLite
+  # postgres_data:

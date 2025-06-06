@@ -1,0 +1,19 @@
+import axios from 'axios';
+
+const apiClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// You can add interceptors for JWT tokens here later
+// apiClient.interceptors.request.use(config => {
+//   const token = localStorage.getItem('jwt_token');
+//   if (token) {
+//     config.headers.Authorization = `Bearer ${token}`;
+//   }
+//   return config;
+// });
+
+export default apiClient;

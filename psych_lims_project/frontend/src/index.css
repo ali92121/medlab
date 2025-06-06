@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', sans-serif; /* Example of a clean font */
+  color: #333; /* Example base text color */
+  background-color: #f4f7f6; /* Example light background for clinical app */
+}
+
+/* Add other base styles suitable for a clinical application */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600; /* Slightly bolder headings */
+}

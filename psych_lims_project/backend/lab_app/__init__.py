@@ -37,9 +37,12 @@ def create_app(config_class=None):
     cors.init_app(app, resources={r"/api/*": {"origins": os.environ.get('CORS_ORIGINS', '').split(',')}})
     limiter.init_app(app)
 
+    from .routes.lab_routes import lab_bp
+
     # Register Blueprints here (if any)
     # from .api import main_api_blueprint
     # app.register_blueprint(main_api_blueprint, url_prefix='/api')
+    app.register_blueprint(lab_bp)
 
     # Health check endpoint
     @app.route('/api/health', methods=['GET'])

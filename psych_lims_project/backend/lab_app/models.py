@@ -1,13 +1,13 @@
-from flask_sqlalchemy import SQLAlchemy
+import datetime
+import enum
+import uuid
+from sqlalchemy import event, inspect, text, Index, CheckConstraint
+from lab_app import db
+from flask import current_app
 from sqlalchemy_utils import EncryptedType
 from sqlalchemy_utils.types.encrypted.encrypted_type import AesEngine
-from sqlalchemy.orm import declarative_base
-from sqlalchemy import event, inspect
 from sqlalchemy.ext.hybrid import hybrid_property
 # from sqlalchemy.dialects.postgresql import JSONB # Not for SQLite
-import datetime
-from lab_app import db # Assuming db is initialized in __init__.py and imported
-from flask import current_app # To access app.config for ENCRYPTION_KEY
 
 # It's better to fetch ENCRYPTION_KEY once, or ensure it's correctly configured in the app context
 # For EncryptedType, the key argument is usually passed directly.
@@ -127,16 +127,157 @@ class MedicalHistory(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     patient = db.relationship('Patient', backref=db.backref('medical_history_items', lazy='dynamic'))
 
-class LabTest(db.Model):
-    __tablename__ = 'lab_tests'
+# class LabTest(db.Model):
+#     __tablename__ = 'lab_tests'
+#     id = db.Column(db.Integer, primary_key=True)
+#     patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False)
+#     test_name = db.Column(db.String(200), nullable=False)
+#     test_category = db.Column(db.String(100), nullable=True)
+#     test_date = db.Column(db.DateTime, nullable=False, default=datetime.datetime.utcnow)
+#     # result_summary = db.Column(db.Text, nullable=True) # Placeholder
+#     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+#     patient = db.relationship('Patient', backref=db.backref('lab_tests', lazy='dynamic'))
+
+class SpecimenType(enum.Enum):
+    SERUM = "serum"
+    PLASMA = "plasma"
+    WHOLE_BLOOD = "whole_blood"
+    URINE = "urine"
+    SALIVA = "saliva"
+    CSF = "csf"
+    TISSUE = "tissue"
+
+class TestStatus(enum.Enum):
+    ORDERED = "ordered"
+    COLLECTED = "collected"
+    IN_TRANSIT = "in_transit"
+    RECEIVED = "received"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    CRITICAL = "critical"
+    CRITICAL_ACKNOWLEDGED = "critical_acknowledged"
+
+class LabTestDefinition(db.Model):
+    __tablename__ = 'lab_test_definitions'
     id = db.Column(db.Integer, primary_key=True)
-    patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False)
-    test_name = db.Column(db.String(200), nullable=False)
-    test_category = db.Column(db.String(100), nullable=True)
-    test_date = db.Column(db.DateTime, nullable=False, default=datetime.datetime.utcnow)
-    # result_summary = db.Column(db.Text, nullable=True) # Placeholder
+    test_name = db.Column(db.String(255), nullable=False, index=True)
+    short_name = db.Column(db.String(100), nullable=True, index=True)
+    loinc_code = db.Column(db.String(50), nullable=True, index=True)
+    category = db.Column(db.String(100), nullable=True, index=True)
+    methodology = db.Column(db.String(255), nullable=True)
+    specimen_type_options = db.Column(db.Text, nullable=True)  # JSON string for list of SpecimenType enums
+    reference_ranges = db.Column(db.JSON, nullable=True) # JSON for complex reference ranges
+    units = db.Column(db.String(50), nullable=True)
+    normal_range_low = db.Column(db.Float, nullable=True)
+    normal_range_high = db.Column(db.Float, nullable=True)
+    critical_range_low = db.Column(db.Float, nullable=True)
+    critical_range_high = db.Column(db.Float, nullable=True)
+    turnaround_time_hours = db.Column(db.Integer, nullable=True) # Expected TAT in hours
+    description = db.Column(db.Text, nullable=True)
+    container_type = db.Column(db.String(100), nullable=True)
+    storage_requirements = db.Column(db.String(255), nullable=True)
+    cost_usd = db.Column(db.Numeric(10, 2), nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
-    patient = db.relationship('Patient', backref=db.backref('lab_tests', lazy='dynamic'))
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    # Commenting out PostgreSQL specific index
+    # __table_args__ = (
+    #     Index('idx_test_name_fulltext', text('test_name'), postgresql_using='gin'),
+    # )
+    results = db.relationship('LabResult', backref='test_definition', lazy='dynamic')
+
+
+class LabOrder(db.Model):
+    __tablename__ = 'lab_orders'
+    id = db.Column(db.Integer, primary_key=True)
+    order_uuid = db.Column(db.String(36), default=lambda: str(uuid.uuid4()), unique=True, nullable=False, index=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False, index=True)
+    ordering_physician_id = db.Column(db.String(255), nullable=True) # Could be FK to a User/Physician table
+    order_datetime = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    priority = db.Column(db.String(50), default='routine', nullable=False) # e.g., routine, stat
+    status = db.Column(db.Enum(TestStatus), default=TestStatus.ORDERED, nullable=False, index=True)
+    specimen_type = db.Column(db.Enum(SpecimenType), nullable=True)
+    specimen_collection_datetime = db.Column(db.DateTime, nullable=True)
+    specimen_received_datetime = db.Column(db.DateTime, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    related_diagnoses_codes = db.Column(db.Text, nullable=True) # JSON string for list of ICD/DSM codes
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    patient = db.relationship('Patient', backref=db.backref('lab_orders', lazy='dynamic'))
+    results = db.relationship('LabResult', backref='lab_order', lazy='dynamic')
+
+
+class LabResult(db.Model):
+    __tablename__ = 'lab_results'
+    id = db.Column(db.Integer, primary_key=True)
+    result_uuid = db.Column(db.String(36), default=lambda: str(uuid.uuid4()), unique=True, nullable=False, index=True)
+    lab_order_id = db.Column(db.Integer, db.ForeignKey('lab_orders.id'), nullable=False, index=True)
+    test_definition_id = db.Column(db.Integer, db.ForeignKey('lab_test_definitions.id'), nullable=False, index=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False, index=True) # Denormalized for easier queries
+
+    result_type = db.Column(db.String(50), nullable=False) # e.g., numeric, text, range, ordinal
+    result_value_text = db.Column(db.Text, nullable=True)
+    result_numeric = db.Column(db.Float, nullable=True)
+    result_units = db.Column(db.String(50), nullable=True)
+    reference_range = db.Column(db.String(255), nullable=True) # e.g., "70-100", "<5.0"
+    abnormal_flag = db.Column(db.String(50), nullable=True) # e.g., L, H, A, AA
+    status = db.Column(db.Enum(TestStatus), default=TestStatus.PROCESSING, nullable=False, index=True)
+    interpretation_notes = db.Column(db.Text, nullable=True)
+    verified_by_user_id = db.Column(db.String(255), nullable=True) # Could be FK to User table
+    result_datetime = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    # lab_order = db.relationship('LabOrder', backref=db.backref('results', lazy='dynamic')) # Redundant due to LabOrder.results
+    # test_definition = db.relationship('LabTestDefinition', backref=db.backref('results', lazy='dynamic')) # Redundant
+    patient = db.relationship('Patient', backref=db.backref('lab_results', lazy='dynamic'))
+
+    __table_args__ = (
+        CheckConstraint("result_numeric IS NULL OR result_type = 'numeric'", name='numeric_result_constraint'),
+    )
+
+
+class CriticalValueAlert(db.Model):
+    __tablename__ = 'critical_value_alerts'
+    id = db.Column(db.Integer, primary_key=True)
+    alert_uuid = db.Column(db.String(36), default=lambda: str(uuid.uuid4()), unique=True, nullable=False, index=True)
+    lab_result_id = db.Column(db.Integer, db.ForeignKey('lab_results.id'), nullable=False, index=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False, index=True)
+    alert_datetime = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
+    alert_level = db.Column(db.String(50), nullable=False) # e.g., high, low, critical
+    notified_personnel_id = db.Column(db.String(255), nullable=True) # Could be FK to User table
+    notification_method = db.Column(db.String(100), nullable=True) # e.g., phone, pager, EHR alert
+    acknowledgement_datetime = db.Column(db.DateTime, nullable=True)
+    acknowledged_by_user_id = db.Column(db.String(255), nullable=True) # Could be FK to User table
+    escalation_status = db.Column(db.String(50), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    lab_result = db.relationship('LabResult', backref=db.backref('alerts', lazy='dynamic'))
+    patient = db.relationship('Patient', backref=db.backref('critical_value_alerts', lazy='dynamic'))
+
+
+class LabTrendAnalysis(db.Model):
+    __tablename__ = 'lab_trend_analysis'
+    id = db.Column(db.Integer, primary_key=True)
+    analysis_uuid = db.Column(db.String(36), default=lambda: str(uuid.uuid4()), unique=True, nullable=False, index=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False, index=True)
+    test_definition_id = db.Column(db.Integer, db.ForeignKey('lab_test_definitions.id'), nullable=False, index=True)
+    analysis_type = db.Column(db.String(100), nullable=False) # e.g., baseline_change, rate_of_change
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    trend_data = db.Column(db.JSON, nullable=True) # Store calculated trend data (e.g., slope, intercept, p-value)
+    summary_finding = db.Column(db.Text, nullable=True)
+    generated_datetime = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    patient = db.relationship('Patient', backref=db.backref('trend_analyses', lazy='dynamic'))
+    test_definition = db.relationship('LabTestDefinition', backref=db.backref('trend_analyses', lazy='dynamic'))
+
 
 class AuditLog(db.Model):
     __tablename__ = 'audit_logs'
